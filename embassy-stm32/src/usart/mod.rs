@@ -117,6 +117,14 @@ pub enum StopBits {
     STOP1P5,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Extended Features on top of USART
+pub enum ExtendedFeature {
+    /// LIN master break condition and LIN slave break detection
+    LIN,
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -128,6 +136,8 @@ pub enum ConfigError {
     BaudrateTooHigh,
     /// Rx or Tx not enabled
     RxOrTxNotEnabled,
+    /// Invalid stop bits, for example LIN requires 1 STOP bit
+    WrongStopBits,
 }
 
 #[non_exhaustive]
@@ -166,6 +176,9 @@ pub struct Config {
     /// Set this to true to invert RX pin signal values (V<sub>DD</sub> = 0/mark, Gnd = 1/idle).
     #[cfg(any(usart_v3, usart_v4))]
     pub invert_rx: bool,
+
+    /// Extended feature on top of USART like LIN
+    pub extended_feature: Option<ExtendedFeature>,
 
     // private: set by new_half_duplex, not by the user.
     half_duplex: bool,
@@ -206,6 +219,7 @@ impl Default for Config {
             invert_tx: false,
             #[cfg(any(usart_v3, usart_v4))]
             invert_rx: false,
+            extended_feature: None,
             half_duplex: false,
         }
     }
@@ -1414,6 +1428,16 @@ fn configure(
         return Err(ConfigError::RxOrTxNotEnabled);
     }
 
+    if config.extended_feature == Some(ExtendedFeature::LIN) {
+        if config.stop_bits != StopBits::STOP1 {
+            return Err(ConfigError::WrongStopBits);
+        }
+
+        if config.half_duplex {
+            return Err(ConfigError::RxOrTxNotEnabled);
+        }
+    }
+
     #[cfg(not(usart_v4))]
     static DIVS: [(u16, ()); 1] = [(1, ())];
 
@@ -1527,6 +1551,8 @@ fn configure(
             w.set_rxinv(config.invert_rx);
             w.set_swap(config.swap_rx_tx);
         }
+
+        w.set_linen(config.extended_feature == Some(ExtendedFeature::LIN));
     });
 
     r.cr3().modify(|w| {
